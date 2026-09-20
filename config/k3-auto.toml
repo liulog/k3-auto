@@ -1,0 +1,45 @@
+# K3 与局域网配置 —— 可入 git
+#
+# 这里只放 K3 板卡、串口、局域网和测试参数，不含跳板机的连接信息。
+# 跳板机（host/user/password/仓库绝对路径）放在 config/jump.toml，该文件被 git 忽略。
+#
+# 解析顺序（基础配置）：--config > $K3_AUTO_CONFIG > ./config/k3-auto.toml（向上查找）
+#                       > ~/.config/k3-auto/config.toml
+# 跳板机配置：           --jump-config > $K3_JUMP_CONFIG > ./config/jump.toml（向上查找）
+#                       > ~/.config/k3-auto/jump.toml
+
+# ── 物理机 = SpaceMiT K3 开发板 ───────────────────────────────────────────
+[board]
+host = "192.168.137.200"    # 板卡 Linux/U-Boot
+user = "bianbu"
+# 密码不入库：在 config/jump.toml 的 [board] password 里填写
+password = ""
+# identity_file = "~/.ssh/k3_board"
+
+# ── 串口与继电器（设备号可能随插拔顺序变化，执行前先确认）────────────────
+[serial]
+relay = "/dev/ttyUSB0"      # USB 继电器上下电，9600
+debug = "/dev/ttyUSB1"      # 板卡调试串口，115200
+debug_baud = 115200
+
+# ── 局域网 / 实验环境 ─────────────────────────────────────────────────────
+[lan]
+jump_nic = "192.168.137.1"      # 跳板机与板卡直连的有线口地址
+board_nic = "192.168.137.200"   # 板卡地址（与 board.host 一致，便于文档引用）
+subnet = "192.168.137.0/24"
+
+# ── 测试参数与产物目录 ────────────────────────────────────────────────────
+[lab]
+tftp_root = "/srv/tftp"
+log_dir = "logs-baseline"
+monitor_seconds = 600
+
+# ── 实验仓库内的脚本入口（相对路径，相对跳板机上的仓库根目录）────────────
+[scripts]
+power = "./k3-power.sh"
+minicom = "./k3-minicom.sh"
+minicom_log = "./minicom-log.sh"
+boot = "tmp/k3_boot_setup.py"
+unixbench = "tmp/k3_unixbench_evidence.py"
+lmbench = "tmp/k3_lmbench_0907.py"
+python = "/usr/bin/python3"

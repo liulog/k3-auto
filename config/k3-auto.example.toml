@@ -1,0 +1,35 @@
+# K3 与局域网配置模板（可入 git）
+#
+# 复制为 config/k3-auto.toml 后按现场填写。
+# 跳板机连接信息请写入 config/jump.toml（见 config/jump.example.toml）。
+
+[board]
+host = "192.168.137.200"
+user = "bianbu"
+# 密码不入库：在 config/jump.toml 的 [board] password 里填写
+password = ""
+# identity_file = "~/.ssh/k3_board"
+
+[serial]
+relay = "/dev/ttyUSB0"
+debug = "/dev/ttyUSB1"
+debug_baud = 115200
+
+[lan]
+jump_nic = "192.168.137.1"
+board_nic = "192.168.137.200"
+subnet = "192.168.137.0/24"
+
+[lab]
+tftp_root = "/srv/tftp"
+log_dir = "logs-baseline"
+monitor_seconds = 600
+
+[scripts]
+power = "./k3-power.sh"
+minicom = "./k3-minicom.sh"
+minicom_log = "./minicom-log.sh"
+boot = "tmp/k3_boot_setup.py"
+unixbench = "tmp/k3_unixbench_evidence.py"
+lmbench = "tmp/k3_lmbench_0907.py"
+python = "/usr/bin/python3"

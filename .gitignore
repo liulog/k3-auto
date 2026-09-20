@@ -1,0 +1,16 @@
+# 跳板机连接信息：含密码与绝对路径，不入 git
+config/jump.toml
+config/*.local.toml
+.k3-auto.local.toml
+
+# 本地日志 / 产物
+logs/
+*.log
+
+__pycache__/
+*.pyc
+
+# 本地临时拷入的内核镜像等二进制
+/Image
+/Image-*
+*.deb

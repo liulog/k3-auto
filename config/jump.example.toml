@@ -1,0 +1,23 @@
+# 跳板机连接配置模板（可入 git，但只放占位符）
+#
+# 复制为 config/jump.toml 后填写；config/jump.toml 已被 .gitignore 忽略。
+
+[jump]
+host = ""                   # 跳板机 SSH IP
+port = 22
+user = ""
+password = ""               # 留空则用 SSH key/agent
+sudo_password = ""          # 留空则复用 password
+strict_host_key = "accept-new"
+# identity_file = "~/.ssh/id_ed25519"
+
+# 跳板机上跑实验的仓库绝对路径；路径权限工具（k3-power.sh 等）依赖它
+repo = ""
+
+[board]
+password = ""               # 板卡 SSH 密码，也不入 git
+
+# 说明：跳板机 sudoers 的 NOPASSWD 通常只匹配绝对路径，例如
+#   (root) NOPASSWD: <repo>/k3-power.sh on
+# k3ctl 会把 config/k3-auto.toml 里 [scripts] 的相对路径展开成 <repo>/<script>
+# 后再 sudo，因此上下电与串口不需要 sudo 密码。
