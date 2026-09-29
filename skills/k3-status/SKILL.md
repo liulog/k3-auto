@@ -5,7 +5,8 @@ description: Read-only quick checks of K3 reachability, debug serial ownership, 
 
 # K3 状态探测
 
-执行一次只读快照，不轮询、不写远端文件、不碰电源与串口。适合回答
+执行一次状态快照，不轮询、不操作电源或串口。`k3ctl status` 会在跳板机
+`/tmp/k3-auto/` 写入 SSH helper，但不修改板卡或实验状态。适合回答
 「板子现在活着吗 / 在跑哪个镜像 / 有没有在跑测试」。
 
 ## 用哪种方式跑
@@ -59,14 +60,15 @@ python3 skills/k3-status/scripts/probe.py \
   U-Boot；都失败只能说不可达，不能断言已下电。ICMP 失败不阻止 SSH 探测。
 - 串口：PID、程序、日志路径。`fuser` 无权限或没输出不证明空闲（minicom 以 root
   运行，普通用户看不到 root 进程 fd），结合 ps；要确定结果用
-  `k3ctl serial-owner`（带 sudo）或 `k3ctl serial-stop` 后再查。
+  `k3ctl serial-owner`（带 sudo）；不要为探测而执行 `serial-stop`。
 - 镜像：当前采集日志最后一次 TFTP Filename/字节数与板端 uname。日志观察
   不等于 SHA256 身份验证；旧日志、重启或来源不明时不能宣称当前镜像已确认。
 - 测试：板端实际进程为主，列 lmbench/UnixBench/lat_sig 等及可辨认的子测试；
   主机 runner 或日志标签仅辅助，不凭旧 campaign 状态判断正在运行。
 - 无法取得的字段写未知；区分「没发现 benchmark」与「板卡安全空闲」。
 
-严格只读：不 claim 串口、不 sudo、不 kill、不操作电源、不复制镜像、不启动
-测试、不修改实验状态。探测不能替代启动前完整预检。
+探测阶段不 claim 串口、不 kill、不操作电源、不复制镜像、不启动测试；
+`serial-owner` 会用 sudo 读取占用信息，不属于纯只读 skill 的默认探测步骤。
+探测不能替代启动前完整预检。
 
 需要真正操作板卡时改用 `k3-lab` skill；需要跑基准测试改用 `k3-benchmark`。

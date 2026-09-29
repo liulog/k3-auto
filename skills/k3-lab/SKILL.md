@@ -25,8 +25,8 @@ description: Operate the SpaceMiT K3 test bench through the Ubuntu jump host - p
 | `config/jump.toml` | 跳板机 IP/用户/密码/sudo 密码/仓库绝对路径 | ❌ |
 
 ```bash
-cp config/k3-auto.example.toml config/k3-auto.toml   # 通常不用改
-cp config/jump.example.toml   config/jump.toml       # 填跳板机信息
+test -f config/k3-auto.toml || cp config/k3-auto.example.toml config/k3-auto.toml
+test -f config/jump.toml || cp config/jump.example.toml config/jump.toml
 $EDITOR config/jump.toml
 ```
 
@@ -40,14 +40,8 @@ $EDITOR config/jump.toml
 
 查看生效配置（密码打码）：`python3 scripts/k3ctl.py show-config`
 
-认证：本机有 `sshpass` 时用配置里的密码；没有则回退 SSH key/agent。
-本仓库用户级安装 sshpass（无 root）：
-
-```bash
-tmp=$(mktemp -d) && cd "$tmp" && apt-get download sshpass \
-  && dpkg-deb -x sshpass_*.deb ~/.local/opt/sshpass \
-  && ln -sf ~/.local/opt/sshpass/usr/bin/sshpass ~/.local/bin/sshpass
-```
+认证：本机有 `sshpass` 时可用配置里的跳板机密码；没有则使用 SSH key/agent。
+不要为了执行 skill 自动安装软件；认证失败时先确认现有认证方式。
 
 ### 权限模型（实测踩坑）
 
@@ -65,11 +59,11 @@ tmp=$(mktemp -d) && cd "$tmp" && apt-get download sshpass \
 
 ### 板卡 SSH 密码认证
 
-跳板机没有 sshpass，但 `k3ctl` 每次操作前会把 `scripts/board_ssh.py` 写
-到跳板机 `/tmp/k3-auto/`，按 `sshpass → pexpect → 裸 ssh` 优先级嗂密码，
-不修改跳板机环境（仓库自带 runner 也是用 pexpect 的）。
+涉及板卡 SSH 的操作会把 `scripts/board_ssh.py` 写到跳板机
+`/tmp/k3-auto/`，按 `sshpass → pexpect → 裸 ssh` 优先级认证。
 
-所有命令都支持 `-n/--dry-run` 先看要执行什么。
+`k3ctl` 的 `-n/--dry-run` 是顶层参数，需放在子命令前，例如
+`python3 scripts/k3ctl.py -n power off`；预览中的密码会被打码。
 
 ## 1. 启动前预检
 
@@ -108,7 +102,7 @@ python3 scripts/k3ctl.py power on
 python3 scripts/k3ctl.py serial-log <prefix>
 python3 scripts/k3ctl.py serial-log <prefix> --foreground   # 直接看串口
 python3 scripts/k3ctl.py serial-owner                        # 谁占着串口（带 sudo）
-python3 scripts/k3ctl.py serial-stop                         # 停掉后台采集
+python3 scripts/k3ctl.py serial-stop                         # 停止目标调试串口的 minicom（先确认无 runner）
 python3 scripts/k3ctl.py tail <prefix>     # 跟踪最新日志
 python3 scripts/k3ctl.py logs              # 看最近 3 个日志尾部
 ```
@@ -117,9 +111,8 @@ python3 scripts/k3ctl.py logs              # 看最近 3 个日志尾部
 minicom 必须有 pty 才能跑，`script` 负责造一个并脱离 ssh 会话。
 不这样做会直接报 `没有 termcap 条目用于 unknown` 并退出。
 
-关 minicom 用 `pkill -x minicom`（精确匹配进程名）：若用 `pkill -f 'minicom -D ...'`，
-模式串会匹配到承载它的 `sudo` 自己的命令行，可能把自己杀掉；且 minicom 会拦
-SIGTERM，所以 `serial-stop` 是 TERM → 2s → KILL → 复查。
+`serial-stop` 只针对配置的调试串口上带 `-D` 参数的 minicom，
+先 TERM，仍存活再 KILL；它仍会中断该串口的采集，先确认没有正在运行的测试。
 
 **关于 `status` 里的 `[SERIAL_OWNER_FUSER]`**：跳板机上有 `fuser`（`psmisc` 已装），
 但 minicom 以 **root** 运行，普通用户看不到 root 进程的 fd，所以该段经常是空的——
@@ -140,8 +133,9 @@ python3 scripts/k3ctl.py tftp-put /path/to/Image-xxx
 python3 scripts/k3ctl.py boot Image-xxx [--prefix inspect-board]
 ```
 
-- `tftp-put` 流式上传到跳板机 `/tmp`，再 `sudo -n mv` 到 `[lab] tftp_root`
-  （默认 `/srv/tftp`），最后 `ls -l` 回显确认。DTB 不从 TFTP 下载，用板载存储里的。
+- `tftp-put` 流式上传到跳板机 `/tmp`，再经 sudo 移到 `[lab] tftp_root`
+  （默认 `/srv/tftp`；有 sudo 密码用 `sudo -S`，否则用 `sudo -n`），
+  最后 `ls -l` 回显确认。DTB 不从 TFTP 下载，用板载存储里的。
 - `boot` 等价于 `K3_IMAGE=... K3_LOG_PREFIX=... K3_LOG_DIR=... tmp/k3_boot_setup.py`：
   下电 → 起串口日志 → 上电 → U-Boot 按 `s` → `setenv knl_name <Image>` →
   `run boot_tftp` → 登录 → 保持约 15 分钟便于人工/SSH 检查 → 自动下电。
@@ -165,7 +159,7 @@ python3 scripts/k3ctl.py board -- 'df -h; free -h'
 
 ```bash
 python3 scripts/k3ctl.py runners            # 应无输出
-python3 scripts/k3ctl.py serial-stop        # 停掉后台 minicom（若有）
+python3 scripts/k3ctl.py serial-stop        # 确认无 runner 后，停止目标串口采集（若有）
 python3 scripts/k3ctl.py serial-owner       # 确认串口不再被占
 python3 scripts/k3ctl.py power off
 python3 scripts/k3ctl.py status             # SSH 失败 + 日志显示关机 = 已下电

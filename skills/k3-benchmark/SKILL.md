@@ -48,7 +48,8 @@ runner 内部流程：继电器下电 → 起 `minicom-log.sh` → 上电 → U-
 
 ## 3. 多镜像多轮（无人值守）
 
-顺序调用即可，同一 `--campaign` 共用状态 JSON，已有 `run_id` 记录会保留：
+先确认没有其他 runner/串口采集；前台顺序调用，同一 `--campaign` 共用状态 JSON。
+不要在循环里给每轮都加 `--background`，否则多轮会同时争抢电源和串口：
 
 ```bash
 run_one() {   # $1=image  $2=run_id
@@ -67,20 +68,14 @@ python3 scripts/k3ctl.py tail <RUN_ID>
 python3 scripts/k3ctl.py runners
 ```
 
-## 4. 配置检查的正确读法
-
-```bash
-python3 scripts/k3ctl.py board -- 'zcat /proc/config.gz | grep -E "CONFIG"'
-```
-
-## 5. 完成判定（最容易出错的一步）
+## 4. 完成判定（最容易出错的一步）
 
 **不要**只看控制台里的 `__UNIXBENCH_DONE__ <RUN_ID> rc=0`——板端内部可能仍是
 `partial` 或根本没有 `status.txt`。必须同时满足：
 
 1. `status.txt` = `success`
 2. `exit-code.txt` = `0`
-3. `stdout.txt` 至少有一套完整 System Benchmarks Index Score
+3. `stdout.txt` 有完整成绩；默认测试需同时核对 1-copy 和 16-copy
 4. `anomaly-scan.txt` 无预期外异常
 5. `raw-results/` 或全局 `results/` 里有对应原始结果
 
@@ -104,7 +99,7 @@ python3 scripts/k3ctl.py board -- 'cd /home/bianbu/unixbench-runs/<RUN_ID>/unixb
 正常 UnixBench 同时有 1-copy 和 16-copy 两段。只有一段分数 → 记
 `partial/failed`，不能当完整成绩。
 
-## 6. 异常监控与停机策略
+## 5. 异常监控与停机策略
 
 监控关键词：`Oops`、`Kernel panic`、`Unable to handle kernel`、`BUG:`、
 `WARNING:`、`page fault`、`access fault`、`RCU stall`、`hung task`。
@@ -119,7 +114,7 @@ python3 scripts/k3ctl.py board -- 'cd /home/bianbu/unixbench-runs/<RUN_ID>/unixb
 | 只有 1-copy 分数 | 16-copy 未完成，记 `partial` |
 | controller 没有 `status.txt` | 去全局 `UnixBench/results/` 找未复制的原始结果 |
 
-## 7. 状态 JSON 与证据归档
+## 6. 状态 JSON 与证据归档
 
 主机侧产物：
 
@@ -132,7 +127,7 @@ python3 scripts/k3ctl.py board -- 'cd /home/bianbu/unixbench-runs/<RUN_ID>/unixb
 `exit_rc`、`collected`、`console_log`，建议补 `raw_result`、`raw_log`、
 `raw_parse`（如 `1-copy complete; 16-copy incomplete`）。
 
-## 8. 收尾清单
+## 7. 收尾清单
 
 1. 检查状态 JSON 与每轮 `status/exit-code/anomaly-scan`。
 2. 检查 `raw-results/`，必要时查全局 `results/`。

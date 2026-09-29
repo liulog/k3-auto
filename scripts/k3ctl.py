@@ -184,9 +184,20 @@ class Lab:
 
     def _exec(self, argv, env=None, stdin: str | None = None, check=True):
         if self.dry_run:
-            print("+ " + " ".join(shlex.quote(a) for a in argv))
+            # 远端脚本中可能包含 sudo/板卡密码，预览时不能原样打印。
+            secrets = sorted({s for s in (self.cfg.jump_password,
+                                          self.cfg.jump_sudo_password,
+                                          self.cfg.board_password) if s},
+                             key=len, reverse=True)
+            def redact(text):
+                for secret in secrets:
+                    # shlex.quote 会拆开含单引号的密码，先遮盖其 shell 表示。
+                    text = text.replace(shlex.quote(secret), "<REDACTED>")
+                    text = text.replace(secret, "<REDACTED>")
+                return text
+            print("+ " + redact(" ".join(shlex.quote(a) for a in argv)))
             if stdin:
-                print("  <<'EOF'\n" + stdin + "EOF")
+                print("  <<'EOF'\n" + redact(stdin) + "EOF")
             return subprocess.CompletedProcess(argv, 0, "", "")
         full_env = dict(os.environ)
         full_env.update(env or {})
@@ -325,17 +336,24 @@ class Lab:
                "|| echo '无 minicom/picocom/screen 进程'")
         self.jump(cmd)
 
-    def serial_stop(self, prefix: str = ""):
-        """停掉后台采集的 minicom（仅限调试串口），避免抢占串口。"""
-        pattern = f"minicom -D {self.cfg.serial_debug}"
-        # 用 -x 按进程名精确匹配，避免 pkill -f 把承载它的 sudo 自己也匹配上
-        # （minicom 会拦 SIGTERM，先 TERM 再 KILL，最后确认真的退出）
-        kill = self._sudo("pkill -x minicom") + "; sleep 2; "
-        kill += self._sudo("pkill -9 -x minicom") + "; sleep 1; "
-        check = (f"if pgrep -f {shlex.quote(pattern)} >/dev/null; then "
-                 f"echo '仍占用:'; pgrep -af {shlex.quote(pattern)}; "
-                 f"else echo 'minicom 已停止'; fi")
-        self.jump(kill + check)
+    def serial_stop(self):
+        """只停止命令行中 -D 指向配置调试串口的 minicom。"""
+        dev = shlex.quote(self.cfg.serial_debug)
+        # 从进程表按程序名及 -D 参数选 PID，避免 pkill -x 杀掉其他串口会话。
+        find_pids = ("ps -eo pid=,comm=,args= | "
+                     f"awk -v dev={dev} '$2 == \"minicom\" {{ "
+                     "for (i=3; i<NF; i++) if ($i == \"-D\" && $(i+1) == dev) "
+                     "print $1 }}'")
+        script = (f"pids=$({find_pids}); "
+                  "if test -z \"$pids\"; then echo '未发现目标串口 minicom'; exit 0; fi; "
+                  + self._sudo("kill -TERM $pids") + "; sleep 2; "
+                  f"pids=$({find_pids}); "
+                  "if test -n \"$pids\"; then "
+                  + self._sudo("kill -KILL $pids") + "; sleep 1; fi; "
+                  f"pids=$({find_pids}); "
+                  "if test -n \"$pids\"; then echo \"仍占用: $pids\"; exit 1; "
+                  "else echo '目标串口 minicom 已停止'; fi")
+        self.jump(script)
 
     def tftp_put(self, local: str, name: str = ""):
         src = Path(local).expanduser().resolve()
