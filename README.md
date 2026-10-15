@@ -2,6 +2,10 @@
 
 SpaceMiT K3 实验台的固定工具与三个精简 skill。连接信息在一份本地 TOML 中；实验的镜像、copies、rounds、prompt 等由外层任务提供。
 
+## Architecture
+
+![k3-auto system architecture](assets/system-architecture.png)
+
 ```text
 Agent → k3ctl → SSH 跳板机 → 串口/继电器/K3
 ```
@@ -60,4 +64,6 @@ PYTHONDONTWRITEBYTECODE=1 python3 tests/test_config.py
 
 测试仅用临时配置和 mock，不调用 SSH、串口、电源、编译器或 benchmark。
 
-感谢 [0bluewhale0](https://github.com/0bluewhale0) 提供原始 k3-status。
+## 致谢
+
+感谢 [@0bluewhale0](https://github.com/0bluewhale0) 提供 `k3-status`，该部分在此基础上可能做了部分重构。
