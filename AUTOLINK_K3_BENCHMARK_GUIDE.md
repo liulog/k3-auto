@@ -13,6 +13,8 @@
 
 ## 上传、启动、电源与串口
 
+下电、上电及自有遗留锁处理使用 [固定 lease / safe-power 流程](skills/k3-lab/references/power-lease.md)。原 `power` 命令保留给旧调用者，不具备该流程的保护。
+
 ```bash
 python3 scripts/k3ctl.py tftp-put /path/to/Image
 python3 scripts/k3ctl.py boot Image --prefix RUN_ID

@@ -54,7 +54,7 @@ python3 scripts/migrate-config.py \
 
 `.pi/settings.json` 已声明 `skills` 目录。操作细节集中在 [操作手册](AUTOLINK_K3_BENCHMARK_GUIDE.md)，skill 只保留入口与关键约束。
 
-`k3ctl` 是低层 CLI，不是生产调度器；它尚未统一实现板卡 lease、所有权与证据门禁，也不把任意实验 JSON 自动转成支持的 benchmark 参数。远端 runner 支持范围必须先核实。不能用本次配置/skill 重构宣称真实 workflow adapter 已完成。
+`k3ctl` 是低层 CLI，不是生产调度器；新电源操作使用 [lease 与 safe-power 流程](skills/k3-lab/references/power-lease.md)，旧 boot/benchmark 接口尚未统一实现所有权与证据门禁，也不把任意实验 JSON 自动转成支持的 benchmark 参数。远端 runner 支持范围必须先核实。不能用本次配置/skill 重构宣称真实 workflow adapter 已完成。
 
 ## 离线验证
 

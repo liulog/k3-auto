@@ -327,6 +327,19 @@ class Lab:
                     f"sudo -S -p '' {cmd}")
         return f"sudo -n {cmd}"
 
+    def guarded(self, operation, owner=None, expected_model="", wait=180):
+        if operation != 'status' and not expected_model:
+            die('lease/safe-power requires --expected-model from the selected board')
+        source = (REPO_ROOT / 'scripts/lease_power.py').read_text()
+        request = dict(operation=operation, owner=owner, expectedModel=expected_model, wait=wait,
+                       serials=[self.cfg.serial_debug, self.cfg.serial_relay],
+                       helper=BOARD_HELPER, boardTarget=self.cfg.board_target,
+                       powerScript=self.abs_script('power_sh'))
+        # Fixed source and non-secret request travel over stdin, not agent shell.
+        program = source + "\nraise SystemExit(main(" + repr(request) + "))\n"
+        script = self._ensure_board_helper() + "python3 - <<'K3_LEASE_POWER'\n" + program + "K3_LEASE_POWER\n"
+        return self.jump(script, check=False).returncode
+
     def power(self, action: str):
         # k3-power.sh 在 sudoers 里有 NOPASSWD，但必须使用绝对路径才匹配
         self.jump(f"sudo -n {shlex.quote(self.abs_script('power_sh'))} {action}")
@@ -490,6 +503,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("tail", help="跟踪某前缀最新日志").add_argument("prefix")
     sub.add_parser("minicom", help="打开交互式 minicom（Ctrl+A 然后 X 退出）")
 
+    for command, actions in (("lease", ["status", "acquire", "review", "release"]),
+                             ("safe-power", ["off", "on", "cycle"])):
+        sp = sub.add_parser(command, help="固定 lease/电源流程；失败保留证据，不自动重试")
+        sp.add_argument("action", choices=actions)
+        sp.add_argument("--owner", help="本轮唯一 RUN_ID；不得填其他任务 owner")
+        sp.add_argument("--expected-model", default="", help="用户选择的设备树型号关键字")
+        sp.add_argument("--wait", type=int, choices=range(30,601), default=180, metavar="30..600",
+                        help="上电后只读等待预算，默认 180 秒")
+
     sp = sub.add_parser("power", help="继电器上下电")
     sp.add_argument("action", choices=["on", "off"])
     sp = sub.add_parser("serial-log", help="启动 minicom 日志采集")
@@ -545,6 +567,8 @@ def main():
         lab.tail(args.prefix)
     elif cmd == "minicom":
         lab.minicom()
+    elif cmd in ("lease", "safe-power"):
+        return lab.guarded(args.action, args.owner, args.expected_model, args.wait)
     elif cmd == "power":
         lab.power(args.action)
     elif cmd == "serial-log":
