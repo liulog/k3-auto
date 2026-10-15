@@ -1,14 +1,20 @@
-# K3 与局域网配置模板（可入 git）
-#
-# 复制为 config/k3-auto.toml 后按现场填写。
-# 跳板机连接信息请写入 config/jump.toml（见 config/jump.example.toml）。
+# 复制为 config/k3-auto.local.toml，chmod 600；只编辑这一份本地配置。
+# 此模板只含空值/通用默认值，不要在受 Git 跟踪的文件里填现场信息。
+[jump]
+host = ""
+port = 22
+user = ""
+password = ""                  # 留空使用 SSH key/agent
+sudo_password = ""             # 留空复用 password
+identity_file = ""
+strict_host_key = "accept-new"
+repo = ""                      # 跳板机实验仓库绝对路径
 
 [board]
-host = "192.168.137.200"
-user = "bianbu"
-# 密码不入库：在 config/jump.toml 的 [board] password 里填写
+host = ""
+user = ""
 password = ""
-# identity_file = "~/.ssh/k3_board"
+identity_file = ""
 
 [serial]
 relay = "/dev/ttyUSB0"
@@ -16,13 +22,13 @@ debug = "/dev/ttyUSB1"
 debug_baud = 115200
 
 [lan]
-jump_nic = "192.168.137.1"
-board_nic = "192.168.137.200"
-subnet = "192.168.137.0/24"
+jump_nic = ""                  # 现场网络记录；k3ctl 不自动配置网络
+board_nic = ""
+subnet = ""
 
 [lab]
 tftp_root = "/srv/tftp"
-log_dir = "logs-baseline"
+log_dir = "logs"
 monitor_seconds = 600
 
 [scripts]

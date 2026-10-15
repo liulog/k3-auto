@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """k3ctl — 用一份配置驱动 SpaceMiT K3 测试台。
 
-所有远端动作都在「跳板机」上执行；板卡命令由跳板机再 SSH 到板卡
-(192.168.137.200)。配置见 config/k3-auto.toml，解析顺序：
+所有远端动作都在「跳板机」上执行；连接信息集中在本地 TOML 配置。
+推荐 config/k3-auto.local.toml，解析顺序：
 
-    --config  >  $K3_AUTO_CONFIG  >  ./config/k3-auto.toml(向上查找)
+    --config  >  $K3_AUTO_CONFIG  >  ./config/k3-auto.local.toml(向上查找)
               >  ~/.config/k3-auto/config.toml
 
 示例：
@@ -39,14 +39,19 @@ def die(msg: str, code: int = 2):
 
 
 def resolve_config(explicit: str | None) -> Path:
-    """K3/局域网配置（可入库）。"""
+    """Single private config; retain the old filename as a fallback."""
     if explicit:
         return Path(explicit).expanduser()
     env = os.environ.get("K3_AUTO_CONFIG")
     if env:
         return Path(env).expanduser()
     for base in (Path.cwd(), *Path.cwd().parents):
-        candidate = base / "config" / "k3-auto.toml"
+        for filename in ("k3-auto.local.toml", "k3-auto.toml"):
+            candidate = base / "config" / filename
+            if candidate.is_file():
+                return candidate
+    for filename in ("k3-auto.local.toml", "k3-auto.toml"):
+        candidate = REPO_ROOT / "config" / filename
         if candidate.is_file():
             return candidate
     return Path.home() / ".config" / "k3-auto" / "config.toml"
@@ -73,6 +78,31 @@ def load_toml(path: Path) -> dict:
         return tomllib.load(fh)
 
 
+def load_config(explicit: str | None = None, jump_explicit: str | None = None) -> Config:
+    """An explicit/single-file config never silently mixes in a nearby jump file.
+
+    Legacy split files are merged only when the selected config has no [jump].
+    An explicit --jump-config remains available for older integrations.
+    """
+    path = resolve_config(explicit)
+    if not path.is_file():
+        die("配置不存在；复制 config/k3-auto.example.toml 为 config/k3-auto.local.toml 后填写")
+    try:
+        data = load_toml(path)
+        jump_path = None
+        if jump_explicit:
+            jump_path = Path(jump_explicit).expanduser()
+        elif "jump" not in data:
+            env = os.environ.get("K3_JUMP_CONFIG")
+            jump_path = Path(env).expanduser() if env else path.with_name("jump.toml")
+        if jump_path is not None and not jump_path.is_file():
+            die("跳板机配置不存在；请在主配置填写 [jump] 或指定有效 --jump-config")
+        return Config(data, path, load_toml(jump_path) if jump_path else None, jump_path)
+    except (OSError, ValueError, TypeError, AttributeError):
+        # TOML parser errors may include the credential-bearing source line.
+        die("配置格式或字段无效；请对照模板检查（不输出配置内容）")
+
+
 class Config:
     def __init__(self, data: dict, path: Path, jump_data: dict | None = None,
                  jump_path: Path | None = None):
@@ -94,8 +124,8 @@ class Config:
         b = dict(data.get("board", {}))
         if jump_data:
             b.update(jump_data.get("board", {}))
-        self.board_host = str(b.get("host", "192.168.137.200"))
-        self.board_user = str(b.get("user", "bianbu"))
+        self.board_host = str(b.get("host", ""))
+        self.board_user = str(b.get("user", ""))
         self.board_password = str(b.get("password", ""))
         self.board_identity = str(b.get("identity_file", ""))
 
@@ -120,9 +150,13 @@ class Config:
         self.lmbench_py = str(sc.get("lmbench", "tmp/k3_lmbench_0907.py"))
         self.python = str(sc.get("python", "/usr/bin/python3"))
 
-        if not self.jump_host or not self.jump_user:
-            die(f"缺少跳板机配置 {self.jump_path or 'config/jump.toml'}；"
-                "复制 config/jump.example.toml 后填写")
+        if not all((self.jump_host, self.jump_user, self.board_host, self.board_user)):
+            die("请在本地配置填写 [jump] 和 [board] 的 host/user")
+        if not 1 <= self.jump_port <= 65535:
+            die("跳板机端口必须为 1..65535")
+        for value in (self.jump_host, self.jump_user, self.board_host, self.board_user):
+            if value.startswith("-") or any(c.isspace() for c in value):
+                die("连接 host/user 不得包含空白或以短横线开头")
 
     @property
     def board_target(self) -> str:
@@ -443,8 +477,8 @@ class Lab:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="k3ctl", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("-c", "--config", help="K3/局域网配置文件路径")
-    p.add_argument("--jump-config", help="跳板机配置文件路径（默认 config/jump.toml）")
+    p.add_argument("-c", "--config", help="单一本地配置文件（默认 config/k3-auto.local.toml）")
+    p.add_argument("--jump-config", help="兼容旧分离配置；显式覆盖跳板机/板卡认证")
     p.add_argument("-n", "--dry-run", action="store_true", help="只打印命令，不执行")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -495,12 +529,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main():
     args = build_parser().parse_args()
-    path = resolve_config(args.config)
-    if not path.is_file():
-        die(f"找不到配置 {path}；复制 config/k3-auto.example.toml 后填写")
-    data = load_toml(path)
-    jump_path = resolve_jump_config(args.jump_config)
-    cfg = Config(data, path, load_toml(jump_path), jump_path)
+    cfg = load_config(args.config, args.jump_config)
     lab = Lab(cfg, dry_run=args.dry_run)
 
     cmd = args.cmd

@@ -1,11 +1,16 @@
 # 跳板机连接信息：含密码与绝对路径，不入 git
 config/jump.toml
+config/k3-auto.toml
 config/*.local.toml
 .k3-auto.local.toml
 
 # 本地日志 / 产物
 logs/
 *.log
+artifacts/
+log-backups/
+logs-*/
+results-*/
 
 __pycache__/
 *.pyc

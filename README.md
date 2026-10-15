@@ -1,91 +1,63 @@
 # k3-auto
 
-Hand over the SpaceMiT K3 testing to the agent.
+SpaceMiT K3 实验台的固定工具与三个精简 skill。连接信息在一份本地 TOML 中；实验的镜像、copies、rounds、prompt 等由外层任务提供。
 
-## Architecture
-
-![k3-auto system architecture](assets/system-architecture.png)
-
-```
-本地(agent) ──SSH──> 跳板机 Ubuntu Bastion Host ──UART+继电器──> SpaceMiT K3 板卡
-                                                    └──有线 192.168.137.1 ──> 192.168.137.200
+```text
+Agent → k3ctl → SSH 跳板机 → 串口/继电器/K3
 ```
 
-## 仓库结构
+## 一份配置
 
-```
-config/k3-auto.toml           # K3 + 局域网配置（入库）
-config/k3-auto.example.toml   # 同上模板（入库）
-config/jump.toml              # 跳板机 IP/账号/密码/仓库路径（不入库）
-config/jump.example.toml      # 跳板机配置模板（入库，只放占位符）
-scripts/k3ctl.py              # 统一 CLI：读配置，驱动跳板机/板卡
-scripts/board_ssh.py          # 板卡 SSH 包装（sshpass → pexpect → 裸 ssh）
-skills/k3-status/             # 只读状态探测
-skills/k3-lab/                # 预检、上下电、串口、TFTP 启动、SSH 检查
-skills/k3-benchmark/          # UnixBench / LMbench 编排与判定
-AUTOLINK_K3_BENCHMARK_GUIDE.md # 完整手工手册（细节参考）
-```
+复制 `config/k3-auto.example.toml` 为 `config/k3-auto.local.toml`，设置文件权限为 `600`，填写 `[jump]`、`[board]`、`[serial]`、`[lan]`、`[lab]`。IP、账号、密码、sudo 密码、密钥路径和跳板机仓库路径都只维护在这份文件中。模板使用空连接字段；工具不再猜测板卡 IP 或用户名。
 
-## 配置分两层（分界就是 git）
+默认查找：`--config` → `$K3_AUTO_CONFIG` → 当前目录及祖先目录的 `config/k3-auto.local.toml`（兼容旧 `k3-auto.toml`）→ 本工具仓库配置 → `~/.config/k3-auto/config.toml`。
 
-| 文件 | 内容 | 入 git |
-| --- | --- | --- |
-| `config/k3-auto.toml` | 板卡 IP/账号、串口设备、局域网、TFTP/日志目录、脚本名 | ✅ |
-| `config/jump.toml` | 跳板机 host/port/user/password/sudo_password、仓库绝对路径 | ❌ |
-
-解析顺序：
-
-```
-K3 配置：  --config > $K3_AUTO_CONFIG > ./config/k3-auto.toml(向上) > ~/.config/k3-auto/config.toml
-跳板机：   --jump-config > $K3_JUMP_CONFIG > ./config/jump.toml(向上) > ~/.config/k3-auto/jump.toml
-```
-
-为了兼容，单文件写法（在 `k3-auto.toml` 里写 `[jump]`）仍然有效；
-`jump.toml` 存在时其中同名字段优先。
-
-## 快速开始
+包含 `[jump]` 的单文件配置不会自动叠加旧 `jump.toml` 或 `$K3_JUMP_CONFIG`，避免连错目标。只有主配置没有 `[jump]` 时，才使用 `$K3_JUMP_CONFIG` 或主配置旁的 `jump.toml`；显式 `--jump-config` 仍可覆盖，用于兼容旧调用。
 
 ```bash
-cp config/k3-auto.example.toml config/k3-auto.toml   # K3/局域网，通常不用改
-cp config/jump.example.toml   config/jump.toml       # 填跳板机信息
-$EDITOR config/jump.toml
-python3 scripts/k3ctl.py show-config  # 两个配置文件路径都会打印，密码打码
-python3 scripts/k3ctl.py status       # 只读看看板子状态
-python3 scripts/k3ctl.py power on     # 上下电（走 sudoers NOPASSWD 绝对路径）
-python3 scripts/k3ctl.py tftp-put /path/to/Image-xxx
-python3 scripts/k3ctl.py unixbench Image-xxx 0909-round1-baseline --campaign baseline
-python3 scripts/k3ctl.py serial-stop  # 停掉后台 minicom
-python3 scripts/k3ctl.py power off
+# 仅本地读取，密码只显示 <set>/<empty>；不连接设备
+python3 scripts/k3ctl.py show-config
+
+# 旧双文件迁移：不联网、不覆盖已有目标、保留原文件
+python3 scripts/migrate-config.py \
+  --base config/k3-auto.toml --jump config/jump.toml \
+  --output config/k3-auto.local.toml
 ```
 
-任何命令加 `-n/--dry-run` 只打印将要执行的远端命令。
+迁移合并规则与原 Config 相同：jump.toml 中的 `[jump]`、`[board]` 覆盖主配置对应字段。旧文件暂留给冻结的历史执行器使用，新任务只维护 local.toml。需要迁移旧调用者时单独切换，不能热改活动实验。
 
-## 已实测的关键行为
+本地配置均被忽略，仓库只跟踪 example 模板。移除当前 Git 跟踪不清除历史版本；历史内容不在本次改写范围。真实密码只允许保存在不入库的本地配置（TOML 或外层任务的私有 JSON）中，不写入公开示例、skill、模型 prompt 或日志。`show-config` 会显示现场地址和用户名，但遮盖密码，不应直接发布其输出。
 
-- 跳板机 SSH 用配置密码（本机 sshpass），板卡 SSH 由跳板机侧 helper 用
-  pexpect 嗂密码，**不需要在跳板机装任何东西**。
-- 跳板机 sudoers 的 NOPASSWD 只匹配**绝对路径**的 `k3-power.sh` /
-  `k3-minicom.sh`；`k3ctl` 自动展开路径，所以上下电/串口不需要 sudo 密码。
-- `tftp-put` 拷到 `/srv/tftp` 属普通 sudo，用 `[jump] sudo_password`。
-- 后台串口采集必须带 pty，`k3ctl serial-log` 内部用
-  `TERM=xterm setsid script -qec ... /dev/null` 实现。
+## 任务 JSON 与工具配置
 
-## 配置解析顺序
+外层任务提供 agent/model、prompt、skills、board、tests 和 outputDir；本仓库只提供工具和操作指导，不启动额外 build agent。
 
-`--config` > `$K3_AUTO_CONFIG` > `./config/k3-auto.toml`（向上查找）>
-`~/.config/k3-auto/config.toml`。
+- 外层提供 `board.jump`、`board.ssh` 时，以本轮 JSON 为配置来源；连接层映射为权限 600 的临时 TOML，并通过 `--config` 显式传入。`jump` → `[jump]`，`ssh` → `[board]`，`identityFile` → `identity_file`，跳板 `workingDirectory` → `[jump].repo`。不让旧配置覆盖本轮地址或凭据。
+- 当前 `k3ctl` **只读取 TOML，不直接读取实验 JSON**；上述自动转换仍需 workflow 连接层实现。没有转换能力时报告缺项，不能仅靠 skill 声称已接通。任务直接提供有效 TOML 路径时可使用现有工具。
+- 当前板卡 SSH helper 固定使用端口 22，未传递板卡 `identity_file`；非默认板卡端口或显式板卡密钥要求不能静默忽略。电源/串口操作还需要现场串口与实验台配置，简单 SSH 查询不因此扩大操作范围。
+- 在本机调用 `k3ctl board -- ...`，工具经跳板机访问板卡；跳板工作目录属于跳板机。凭据只交给连接层，不回显配置或含认证信息的传输命令。私有配置、原始日志不提交。
+- 一个执行 agent 按 prompt 选择 skill 和工具，顺序执行任务，将每项输出、退出码和证据位置交给外层汇总。现场失败记录留在本轮输出目录。
 
-## 安装 skills
+## 工具与 skills
 
-Skills 位于 `skills/`。仓库内的 `.pi/settings.json` 已声明 `{"skills": ["skills"]}`，
-在项目里打开 pi 即可发现。要全局可用就软链：
+|入口|用途|
+|---|---|
+|`scripts/k3ctl.py`|读取配置并调用固定现场工具|
+|`scripts/board_ssh.py`|跳板机侧板卡 SSH helper|
+|`skills/k3-status`|单次状态快照|
+|`skills/k3-lab`|授权的电源、串口、上传与启动操作|
+|`skills/k3-benchmark`|按请求执行测试并核验证据|
+
+`.pi/settings.json` 已声明 `skills` 目录。操作细节集中在 [操作手册](AUTOLINK_K3_BENCHMARK_GUIDE.md)，skill 只保留入口与关键约束。
+
+`k3ctl` 是低层 CLI，不是生产调度器；它尚未统一实现板卡 lease、所有权与证据门禁，也不把任意实验 JSON 自动转成支持的 benchmark 参数。远端 runner 支持范围必须先核实。不能用本次配置/skill 重构宣称真实 workflow adapter 已完成。
+
+## 离线验证
 
 ```bash
-ln -s "$PWD/skills/k3-status"    ~/.pi/agent/skills/k3-status
-ln -s "$PWD/skills/k3-lab"       ~/.pi/agent/skills/k3-lab
-ln -s "$PWD/skills/k3-benchmark" ~/.pi/agent/skills/k3-benchmark
+PYTHONDONTWRITEBYTECODE=1 python3 tests/test_config.py
 ```
 
-## 致谢
+测试仅用临时配置和 mock，不调用 SSH、串口、电源、编译器或 benchmark。
 
-感谢 [@0bluewhale0](https://github.com/0bluewhale0) 提供 `k3-status`，该部分在此基础上可能做了部分重构。
+感谢 [0bluewhale0](https://github.com/0bluewhale0) 提供原始 k3-status。
