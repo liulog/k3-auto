@@ -13,7 +13,9 @@ GUARD = Path('/tmp/k3-agent-workflow-board.guard')
 
 
 class Refused(RuntimeError):
-    pass
+    def __init__(self, message, *, code='CHECK_REFUSED', stage=None):
+        super().__init__(message)
+        self.code, self.stage = code, stage
 
 
 class Unavailable(Refused):
@@ -82,27 +84,67 @@ print(json.dumps(result))
 '''
 
 
+def check_failure(result, stage, fallback):
+    """Classify known diagnostics; never return raw sudo/SSH output or argv."""
+    message = ((result.stdout or '') + (result.stderr or '')).lower()
+    sudo = any(s in message for s in ('sudo:', 'sudoers', 'not allowed to execute'))
+    password_hint = ('Board sudo requires authentication; this board probe requires board-side NOPASSWD permission'
+                     if stage.startswith('board.') else
+                     'Jump-host sudo requires authentication; configure [jump].sudo_password or the required NOPASSWD permission')
+    cases = [
+        (sudo and any(s in message for s in ('a password is required', 'interactive authentication is required', 'a terminal is required', 'no tty present')),
+         'SUDO_PASSWORD_REQUIRED', password_hint),
+        (sudo and any(s in message for s in ('incorrect password', 'sorry, try again', 'authentication failure', 'no password was provided')),
+         'SUDO_AUTH_FAILED', 'sudo authentication failed; check the configured sudo credential'),
+        (sudo and any(s in message for s in ('not in the sudoers', 'not allowed to', 'may not run sudo')),
+         'SUDO_NOT_ALLOWED', 'sudo policy denies this root check; password alone cannot grant permission'),
+        (sudo and any(s in message for s in ('must have a tty', 'requiretty')),
+         'SUDO_TTY_REQUIRED', 'sudo policy requires a terminal; unattended root check is unavailable'),
+        (any(s in message for s in ('serial busy or unknown', 'serial lock exists', 'runner or terminal active')),
+         'RESOURCE_BUSY_OR_UNKNOWN', 'Serial/runner resource occupied or state unknown'),
+        ('serial missing' in message, 'SERIAL_DEVICE_MISSING', 'Configured serial device is absent'),
+        ('host key verification' in message, 'SSH_HOST_KEY_FAILED', 'SSH host verification failed'),
+        ('permission denied' in message or 'authentication failed' in message,
+         'SSH_AUTH_FAILED', 'SSH authentication failed'),
+    ]
+    for matched, code, reason in cases:
+        if matched:
+            raise Refused(reason, code=code, stage=stage)
+    raise Refused(fallback, code='ROOT_CHECK_FAILED', stage=stage)
+
+
 class Hardware:
     def __init__(self, request):
         self.r = request
 
+    def root_check(self, argv, timeout):
+        password = self.r.get('sudoPassword', '')
+        if '\n' in password or '\r' in password:
+            raise Refused('Multiline sudo passwords are unsupported', code='SUDO_CONFIG_INVALID', stage='jump.sudo')
+        options = ['-S', '-p', ''] if password else ['-n']
+        # Password only on stdin; never in argv, env, journals or output.
+        return subprocess.run(['sudo', *options, *argv],
+                              input=password+'\n' if password else '',
+                              capture_output=True, text=True, timeout=timeout,
+                              env={**os.environ, 'LC_ALL':'C'})
+
     def host(self):
-        r = subprocess.run(['sudo', '-n', 'python3', '-c', PROBE,
-                            json.dumps(self.r['serials']), json.dumps([Path(self.r['powerScript']).name])], capture_output=True, text=True, timeout=30)
+        r = self.root_check(['python3', '-c', PROBE, json.dumps(self.r['serials']),
+                             json.dumps([Path(self.r['powerScript']).name])], 30)
         if r.returncode:
-            raise Refused('Host root-visible serial/runner check failed')
+            check_failure(r, 'jump.preflight', 'Host root-visible serial/runner check failed')
         return json.loads(r.stdout)
 
     def board(self):
         import shlex
-        command = shlex.join(['sudo', '-n', 'python3', '-c', PROBE, '[]'])
+        command = shlex.join(['env', 'LC_ALL=C', 'sudo', '-n', 'python3', '-c', PROBE, '[]'])
         r = subprocess.run(['python3', self.r['helper'], self.r['boardTarget'], command],
                            capture_output=True, text=True, timeout=30)
         if r.returncode:
             message=(r.stdout+r.stderr).lower()
             if r.returncode==255 and not any(x in message for x in ('permission denied','authentication','host key')) and any(x in message for x in ('connection refused','connection timed out','no route to host','network is unreachable')):
                 raise Unavailable('Board network not ready')
-            raise Refused('Board authentication, root visibility or resource check failed')
+            check_failure(r, 'board.preflight', 'Board authentication, root visibility or resource check failed')
         result = json.loads(r.stdout)
         if self.r['expectedModel'].lower() not in result['model'].lower():
             raise Refused('Board model mismatch')
@@ -111,10 +153,12 @@ class Hardware:
     def runner_absent(self, pid):
         if not str(pid).isdigit() or int(pid)<=1:
             raise Refused('Invalid runner PID')
-        code="import os,sys\ntry: os.kill(int(sys.argv[1]),0)\nexcept ProcessLookupError: sys.exit(0)\nsys.exit(1)"
-        r=subprocess.run(['sudo','-n','python3','-c',code,str(pid)],capture_output=True,timeout=15)
+        code="import os,sys\ntry: os.kill(int(sys.argv[1]),0)\nexcept ProcessLookupError: sys.exit(0)\nsys.exit(3)"
+        r=self.root_check(['python3','-c',code,str(pid)],15)
+        if r.returncode == 3:
+            raise Refused('Runner is still alive; preserve lease', code='RUNNER_ACTIVE', stage='jump.runner-review')
         if r.returncode:
-            raise Refused('Runner still alive or cannot prove it absent')
+            check_failure(r, 'jump.runner-review', 'Runner still alive or cannot prove it absent')
 
     def power(self, action):
         r = subprocess.run(['sudo', '-n', self.r['powerScript'], action],
@@ -147,6 +191,8 @@ class Controller:
     def run(self, operation, owner, wait=180):
         if operation == 'status':
             return snapshot(self.path)
+        if operation == 'check':
+            return {'host':self.hw.host(), 'board':self.hw.board(), 'leaseCreated':False, 'powerExecuted':False}
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,95}', owner or ''):
             raise Refused('An explicit valid owner RUN_ID is required')
         if operation == 'acquire':
@@ -262,6 +308,7 @@ def main(request):
     except Exception as error:
         # Don't echo subprocess argv, output or credentials.
         print(json.dumps({'ok':False,'status':'needs_attention','errorType':type(error).__name__,
+                          'code':getattr(error, 'code', 'OPERATION_FAILED'), 'stage':getattr(error, 'stage', None),
                           'reason':str(error) if isinstance(error,Refused) else 'Operation failed; inspect lease without retrying power'}),flush=True)
         return 2
     finally:

@@ -164,7 +164,7 @@ class Tests(unittest.TestCase):
         ctl=importlib.util.module_from_spec(loader);loader.loader.exec_module(ctl)
         args=ctl.build_parser().parse_args(['safe-power','cycle','--owner','mine','--expected-model','com260'])
         self.assertEqual(args.wait,180)
-        cfg=types.SimpleNamespace(serial_debug='/dev/debug',serial_relay='/dev/relay',
+        cfg=types.SimpleNamespace(jump_sudo_password='',serial_debug='/dev/debug',serial_relay='/dev/relay',
             board_target='user@board.example',power_sh='/test/k3-power.sh')
         lab=ctl.Lab(cfg)
         with patch.object(lab,'_ensure_board_helper',return_value=''),patch.object(lab,'jump',return_value=types.SimpleNamespace(returncode=2)) as jump:

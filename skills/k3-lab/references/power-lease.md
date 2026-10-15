@@ -13,6 +13,8 @@ K3_TASK_MODEL=com260
 k3task() { python3 scripts/k3ctl.py --config "$K3_TASK_CONFIG" "$@"; }
 ```
 
+先运行 `k3task lease check --expected-model "$K3_TASK_MODEL"` 做只读预检，不取得 lease、不操作电源。失败时 JSON 中的 `stage` 区分跳板机/板卡，`code` 区分 sudo 认证、权限与资源问题。
+
 1. `k3task lease status`：查看既有锁。无锁才能取得新锁；锁属于其他任务或来源未知就停止。有本轮旧锁时先按下文复核。
 2. `k3task lease acquire --owner "$K3_TASK_OWNER" --expected-model "$K3_TASK_MODEL"`：原子取得锁。工具在取得前后检查跳板机 root 可见的串口、串口锁、runner，以及板端 root 可见的任务和型号。任一检查失败停止；如果已取得锁，保留现场待复核。
 3. 用户授权完整断电再上电时：
@@ -50,6 +52,6 @@ k3task() { python3 scripts/k3ctl.py --config "$K3_TASK_CONFIG" "$@"; }
 
 ## 前提与边界
 
-跳板机和板卡需已有可用的 Python 3 与非交互 root 检查权限，跳板机还需 fuser；relay 仍通过已配置的 NOPASSWD 电源脚本。缺权限或依赖时报告缺项，不修改 sudoers 或安装软件。配置选择错误、忽略 lease 的外部操作者及非协作 runner 不由此工具消除，运行前仍应确认所选资源。
+跳板机和板卡需已有可用的 Python 3 与 root 检查权限，跳板机还需 fuser。跳板机预检及遗留 PID 复核复用 `[jump].sudo_password`（未单独设置时沿用现有配置的 SSH 密码回退）：有密码时通过 stdin 使用 `sudo -S -p ""`，无密码时使用 `sudo -n`。不会弹交互提示或输出密码。板卡预检仍需板端 NOPASSWD 权限；relay 仍通过已配置的 NOPASSWD 电源脚本。`SUDO_PASSWORD_REQUIRED` 表示缺少可用 sudo 认证，`SUDO_AUTH_FAILED` 表示认证失败，`SUDO_NOT_ALLOWED` 表示 sudo 策略拒绝；密码不能替代命令授权。缺权限或依赖时报告缺项，不修改 sudoers 或安装软件。配置选择错误、忽略 lease 的外部操作者及非协作 runner 不由此工具消除，运行前仍应确认所选资源。
 
 原 `power on/off` 是兼容旧冻结执行器的低层接口，不带这些保护，新 agent 电源流程使用 `safe-power`。本流程不刷写、不修改 U-Boot、不运行 benchmark；内核版本与型号观察也不能单独证明特定 Image 已验证。

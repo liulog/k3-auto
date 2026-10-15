@@ -330,12 +330,17 @@ class Lab:
     def guarded(self, operation, owner=None, expected_model="", wait=180):
         if operation != 'status' and not expected_model:
             die('lease/safe-power requires --expected-model from the selected board')
+        if self.dry_run:
+            print('lease/safe-power preview: ' + operation + '; no connection, lease or power action executed')
+            return 0
         source = (REPO_ROOT / 'scripts/lease_power.py').read_text()
         request = dict(operation=operation, owner=owner, expectedModel=expected_model, wait=wait,
                        serials=[self.cfg.serial_debug, self.cfg.serial_relay],
                        helper=BOARD_HELPER, boardTarget=self.cfg.board_target,
-                       powerScript=self.abs_script('power_sh'))
-        # Fixed source and non-secret request travel over stdin, not agent shell.
+                       powerScript=self.abs_script('power_sh'),
+                       sudoPassword=self.cfg.jump_sudo_password)
+        # Fixed source/config travel over encrypted SSH stdin; sudo credential is
+        # consumed in memory only, never added to remote argv or lease journals.
         program = source + "\nraise SystemExit(main(" + repr(request) + "))\n"
         script = self._ensure_board_helper() + "python3 - <<'K3_LEASE_POWER'\n" + program + "K3_LEASE_POWER\n"
         return self.jump(script, check=False).returncode
@@ -503,7 +508,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("tail", help="跟踪某前缀最新日志").add_argument("prefix")
     sub.add_parser("minicom", help="打开交互式 minicom（Ctrl+A 然后 X 退出）")
 
-    for command, actions in (("lease", ["status", "acquire", "review", "release"]),
+    for command, actions in (("lease", ["status", "check", "acquire", "review", "release"]),
                              ("safe-power", ["off", "on", "cycle"])):
         sp = sub.add_parser(command, help="固定 lease/电源流程；失败保留证据，不自动重试")
         sp.add_argument("action", choices=actions)
