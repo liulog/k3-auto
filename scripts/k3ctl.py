@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shlex
 import shutil
@@ -338,6 +339,7 @@ class Lab:
                        serials=[self.cfg.serial_debug, self.cfg.serial_relay],
                        helper=BOARD_HELPER, boardTarget=self.cfg.board_target,
                        powerScript=self.abs_script('power_sh'),
+                       boardProbeSHA256=hashlib.sha256((REPO_ROOT/'scripts/board_root_probe.py').read_bytes()).hexdigest(),
                        sudoPassword=self.cfg.jump_sudo_password)
         # Fixed source/config travel over encrypted SSH stdin; sudo credential is
         # consumed in memory only, never added to remote argv or lease journals.

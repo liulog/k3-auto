@@ -105,4 +105,20 @@ class Tests(unittest.TestCase):
             with self.assertRaises(m.Refused) as e:self.hardware('bad\npassword').host()
             self.assertEqual(e.exception.code,'SUDO_CONFIG_INVALID')
 
+    def test_board_probe_is_fixed_and_hash_verified(self):
+        h=self.hardware();h.r['boardProbeSHA256']='expected-hash'
+        evidence={'model':'SpacemiT K3 Com260 IFX','probeSHA256':'expected-hash','rootVisible':True}
+        with patch.object(m.subprocess,'run',return_value=result(out=json.dumps(evidence))) as run:
+            self.assertTrue(h.board()['rootVisible'])
+            remote=run.call_args.args[0][-1]
+            self.assertIn('/usr/bin/python3 -I /usr/local/libexec/k3-auto-board-probe.py',remote)
+            self.assertNotIn(' -c ',remote)
+    def test_changed_board_probe_rejected(self):
+        h=self.hardware();h.r['boardProbeSHA256']='expected-hash'
+        for hash_value in ('wrong',None):
+            evidence={'model':'com260','probeSHA256':hash_value}
+            with self.subTest(hash=hash_value),patch.object(m.subprocess,'run',return_value=result(out=json.dumps(evidence))):
+                with self.assertRaises(m.Refused) as e:h.board()
+                self.assertEqual(e.exception.code,'BOARD_PROBE_MISMATCH')
+
 if __name__=='__main__':unittest.main()

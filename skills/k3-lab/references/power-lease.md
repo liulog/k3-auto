@@ -52,6 +52,6 @@ k3task() { python3 scripts/k3ctl.py --config "$K3_TASK_CONFIG" "$@"; }
 
 ## 前提与边界
 
-跳板机和板卡需已有可用的 Python 3 与 root 检查权限，跳板机还需 fuser。跳板机预检及遗留 PID 复核复用 `[jump].sudo_password`（未单独设置时沿用现有配置的 SSH 密码回退）：有密码时通过 stdin 使用 `sudo -S -p ""`，无密码时使用 `sudo -n`。不会弹交互提示或输出密码。板卡预检仍需板端 NOPASSWD 权限；relay 仍通过已配置的 NOPASSWD 电源脚本。`SUDO_PASSWORD_REQUIRED` 表示缺少可用 sudo 认证，`SUDO_AUTH_FAILED` 表示认证失败，`SUDO_NOT_ALLOWED` 表示 sudo 策略拒绝；密码不能替代命令授权。缺权限或依赖时报告缺项，不修改 sudoers 或安装软件。配置选择错误、忽略 lease 的外部操作者及非协作 runner 不由此工具消除，运行前仍应确认所选资源。
+跳板机和板卡需已有可用的 Python 3 与 root 检查权限，跳板机还需 fuser。跳板机预检及遗留 PID 复核复用 `[jump].sudo_password`（未单独设置时沿用现有配置的 SSH 密码回退）：有密码时通过 stdin 使用 `sudo -S -p ""`，无密码时使用 `sudo -n`。不会弹交互提示或输出密码。板卡预检仅执行 root 所有的 `/usr/local/libexec/k3-auto-board-probe.py`，校验其内容哈希与仓库 `scripts/board_root_probe.py` 一致；板端 NOPASSWD 仅授权 `/usr/bin/python3 -I /usr/local/libexec/k3-auto-board-probe.py`，不授权任意 `python3 -c`。探针不接受参数。首次配置须由管理员写入 root 所有、普通用户不可写的探针和 sudoers 规则，并经 `visudo -c` 检查；不能直接覆盖未知已有文件。relay 仍通过已配置的 NOPASSWD 电源脚本。`SUDO_PASSWORD_REQUIRED` 表示缺少可用 sudo 认证，`SUDO_AUTH_FAILED` 表示认证失败，`SUDO_NOT_ALLOWED` 表示 sudo 策略拒绝；密码不能替代命令授权。缺权限或依赖时报告缺项，不修改 sudoers 或安装软件。配置选择错误、忽略 lease 的外部操作者及非协作 runner 不由此工具消除，运行前仍应确认所选资源。
 
 原 `power on/off` 是兼容旧冻结执行器的低层接口，不带这些保护，新 agent 电源流程使用 `safe-power`。本流程不刷写、不修改 U-Boot、不运行 benchmark；内核版本与型号观察也不能单独证明特定 Image 已验证。

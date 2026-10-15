@@ -137,7 +137,8 @@ class Hardware:
 
     def board(self):
         import shlex
-        command = shlex.join(['env', 'LC_ALL=C', 'sudo', '-n', 'python3', '-c', PROBE, '[]'])
+        command = shlex.join(['env', 'LC_ALL=C', 'sudo', '-n', '/usr/bin/python3', '-I',
+                              '/usr/local/libexec/k3-auto-board-probe.py'])
         r = subprocess.run(['python3', self.r['helper'], self.r['boardTarget'], command],
                            capture_output=True, text=True, timeout=30)
         if r.returncode:
@@ -146,6 +147,9 @@ class Hardware:
                 raise Unavailable('Board network not ready')
             check_failure(r, 'board.preflight', 'Board authentication, root visibility or resource check failed')
         result = json.loads(r.stdout)
+        if result.get('probeSHA256') != self.r['boardProbeSHA256']:
+            raise Refused('Board probe differs from reviewed tool; update the fixed helper',
+                          code='BOARD_PROBE_MISMATCH', stage='board.preflight')
         if self.r['expectedModel'].lower() not in result['model'].lower():
             raise Refused('Board model mismatch')
         return result
